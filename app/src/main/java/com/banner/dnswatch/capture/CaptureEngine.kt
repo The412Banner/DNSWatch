@@ -126,7 +126,12 @@ class CaptureEngine(
             cmds += dropCmd(if (u == "all") null else u.toInt(), ip, add = false)
         }
         appliedDrops.clear()
-        if (cmds.isNotEmpty()) Root.execAll(*cmds.toTypedArray())
+        // Self-heal: kill any stray tcpdump on our group and sweep ALL leftover
+        // group rules (covers sessions that were killed without a clean stop()).
+        cmds += "pkill -f 'tcpdump -i nflog:$GROUP' 2>/dev/null"
+        for (cmd in listOf("iptables", "ip6tables"))
+            cmds += "$cmd -t mangle -S 2>/dev/null | grep 'nflog-group $GROUP' | sed 's/^-A/-D/' | while read r; do $cmd -t mangle \$r 2>/dev/null; done"
+        Root.execAll(*cmds.toTypedArray())
     }
 
     private fun applyDrop(uid: Int?, ip: String) {
