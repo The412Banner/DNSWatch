@@ -75,10 +75,10 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         checkRoot(); loadApps()
         blocked.addAll(prefs.getStringSet("blocked", emptySet()) ?: emptySet())
         val saved = prefs.getString("tracker_source", null)
-        setTrackerSource(TrackerDb.Source.entries.firstOrNull { it.name == saved } ?: TrackerDb.Source.BUILT_IN)
+        selectTrackerSource(TrackerDb.Source.entries.firstOrNull { it.name == saved } ?: TrackerDb.Source.BUILT_IN)
     }
 
-    fun setTrackerSource(s: TrackerDb.Source) {
+    fun selectTrackerSource(s: TrackerDb.Source) {
         trackerSource = s
         TrackerDb.source = s
         prefs.edit().putString("tracker_source", s.name).apply()

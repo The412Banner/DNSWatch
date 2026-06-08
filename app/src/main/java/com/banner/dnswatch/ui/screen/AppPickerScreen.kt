@@ -65,8 +65,8 @@ fun AppPickerScreen(vm: MonitorViewModel, onStarted: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 TrackerDb.Source.entries.forEach { s ->
-                    if (vm.trackerSource == s) Button(onClick = { vm.setTrackerSource(s) }) { Text(s.label) }
-                    else OutlinedButton(onClick = { vm.setTrackerSource(s) }) { Text(s.label) }
+                    if (vm.trackerSource == s) Button(onClick = { vm.selectTrackerSource(s) }) { Text(s.label) }
+                    else OutlinedButton(onClick = { vm.selectTrackerSource(s) }) { Text(s.label) }
                 }
             }
         }
