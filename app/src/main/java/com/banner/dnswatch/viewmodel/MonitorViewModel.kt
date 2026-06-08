@@ -20,7 +20,9 @@ import com.banner.dnswatch.root.Root
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.BufferedWriter
 import java.io.File
+import java.io.FileWriter
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -36,6 +38,13 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
     var running by mutableStateOf(false); private set
     var status by mutableStateOf(""); private set
     var loadingApps by mutableStateOf(false); private set
+
+    // recording
+    var recording by mutableStateOf(false); private set
+    var recordPath by mutableStateOf<String?>(null); private set
+    var recordCount by mutableStateOf(0); private set
+    private var logWriter: BufferedWriter? = null
+    private var recordFile: File? = null
 
     // filters
     var query by mutableStateOf("")
@@ -92,8 +101,46 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         running = false
         status = "stopped"
         CaptureService.stop(getApplication())
+        // flush a final drain, then stop recording so nothing is lost
+        drainOnce(Int.MAX_VALUE)
+        if (recording) stopRecording()
         handler.removeCallbacksAndMessages(null)
     }
+
+    // ---- session recording (full log to file, beyond the in-memory cap) ----
+    fun toggleRecord() { if (recording) stopRecording() else startRecording() }
+
+    private fun startRecording() {
+        val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(System.currentTimeMillis())
+        val dir = getApplication<Application>().getExternalFilesDir(null)
+        val f = File(dir, "dnswatch-session-$ts.log")
+        val w = BufferedWriter(FileWriter(f))
+        w.write("# DNSWatch session $ts\n")
+        w.write("# apps: ${selected.values.joinToString { "${it.label}(uid ${it.uid})" }}\n")
+        w.write("# columns: epochMs\tapp\tkind\tdir\tproto\thost\tip:port\tanswers\n")
+        // seed with whatever is already on screen (oldest first)
+        events.asReversed().forEach { w.write(line(it)) }
+        recordFile = f; logWriter = w; recordCount = events.size
+        recording = true
+        recordPath = f.absolutePath
+        status = "recording → ${f.name}"
+    }
+
+    private fun stopRecording() {
+        recording = false
+        runCatching { logWriter?.flush(); logWriter?.close() }
+        logWriter = null
+        val f = recordFile ?: return
+        // copy to /sdcard/Download for easy access (root; falls back to app dir)
+        val dest = "/sdcard/Download/${f.name}"
+        val (code, _) = Root.exec("cp '${f.absolutePath}' '$dest' && chmod 644 '$dest'")
+        recordPath = if (code == 0) dest else f.absolutePath
+        status = "saved $recordCount events → $recordPath"
+    }
+
+    private fun line(e: NetEvent) =
+        "${e.timeMs}\t${e.appLabel}\t${e.kind}\t${e.direction}\t${e.proto}\t" +
+            "${e.host ?: "-"}\t${e.remoteIp ?: "-"}:${e.port}\t${e.answers.joinToString(",")}\n"
 
     fun clear() { events.clear(); incoming.clear() }
 
@@ -107,16 +154,23 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
     private fun scheduleDrain() {
         handler.postDelayed({
             if (running || incoming.isNotEmpty()) {
-                var n = 0
-                while (true) {
-                    val e = incoming.poll() ?: break
-                    events.add(0, e)
-                    if (++n >= 300) break
-                }
-                while (events.size > MAX) events.removeAt(events.size - 1)
+                drainOnce(300)
                 if (running) scheduleDrain()
             }
         }, 150)
+    }
+
+    /** Moves up to [limit] queued events into the UI list; records each first so
+     *  the on-disk log keeps everything even past the in-memory cap. */
+    private fun drainOnce(limit: Int) {
+        var n = 0
+        while (n < limit) {
+            val e = incoming.poll() ?: break
+            if (recording) runCatching { logWriter?.write(line(e)); recordCount++ }
+            events.add(0, e)
+            n++
+        }
+        while (events.size > MAX) events.removeAt(events.size - 1)
     }
 
     fun filtered(): List<NetEvent> {

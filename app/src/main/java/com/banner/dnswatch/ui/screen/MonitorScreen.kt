@@ -2,6 +2,7 @@ package com.banner.dnswatch.ui.screen
 
 import android.widget.Toast
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +49,8 @@ fun MonitorScreen(vm: MonitorViewModel) {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -57,10 +60,21 @@ fun MonitorScreen(vm: MonitorViewModel) {
             } else {
                 Button(onClick = { vm.start() }, enabled = vm.selected.isNotEmpty()) { Text("Start") }
             }
+            if (vm.recording) {
+                Button(onClick = { vm.toggleRecord() },
+                    colors = ButtonDefaults.buttonColors(containerColor = TrackerRed)) { Text("● REC") }
+            } else {
+                OutlinedButton(onClick = { vm.toggleRecord() }) { Text("Record") }
+            }
             OutlinedButton(onClick = { vm.clear() }) { Text("Clear") }
             OutlinedButton(onClick = {
                 val p = vm.export(); Toast.makeText(ctx, "Saved $p", Toast.LENGTH_LONG).show()
             }) { Text("Export") }
+        }
+        if (vm.recording) {
+            Text("● recording ${vm.recordCount} events → ${vm.recordPath ?: ""}",
+                color = TrackerRed, fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 12.dp))
         }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp),
