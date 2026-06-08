@@ -64,7 +64,7 @@ object QuicParser {
 
         // packet number (truncated is fine for nonce since CH is the first packet, pn small)
         var pn = 0L
-        for (i in 0 until pnLen) pn = (pn shl 8) or (pnBytes[i].toLong() and 0xFF)
+        for (i in 0 until pnLen) pn = (pn shl 8) or (pnBytes[i].toLong() and 0xFFL)
 
         // ---- AEAD decrypt ----
         val payloadStart = pnOffset + pnLen
@@ -79,7 +79,7 @@ object QuicParser {
         // nonce = iv XOR left-padded packet number.
         val nonce = iv.copyOf()
         for (i in 0 until 8) {
-            nonce[11 - i] = (nonce[11 - i].toInt() xor ((pn ushr (8 * i)) and 0xFF).toInt()).toByte()
+            nonce[11 - i] = (nonce[11 - i].toInt() xor ((pn ushr (8 * i)) and 0xFFL).toInt()).toByte()
         }
 
         val plain = aesGcmDecrypt(key, nonce, aad, b, payloadStart, payloadEnd - payloadStart) ?: return null
@@ -152,7 +152,7 @@ object QuicParser {
         val n = 1 shl (b0 ushr 6)
         if (o + n > end) return null
         var v = (b0 and 0x3F).toLong()
-        for (i in 1 until n) v = (v shl 8) or (b[o + i].toLong() and 0xFF)
+        for (i in 1 until n) v = (v shl 8) or (b[o + i].toLong() and 0xFFL)
         return v to (o + n)
     }
     private fun be32(b: ByteArray, o: Int): Int =
