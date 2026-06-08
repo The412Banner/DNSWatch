@@ -12,8 +12,9 @@ object TlsSni {
     }
 
     /** [hs] points at a handshake message (0x01 client_hello, 3-byte len, body…). */
-    fun fromHandshake(b: ByteArray, hs: Int, end: Int): String? = try {
-        if (hs + 4 > end || b[hs].toInt() and 0xFF != 0x01) null else {
+    fun fromHandshake(b: ByteArray, hs: Int, end: Int): String? {
+        try {
+            if (hs + 4 > end || b[hs].toInt() and 0xFF != 0x01) return null
             var p = hs + 4
             p += 2 + 32                                   // client_version + random
             if (p >= end) return null
@@ -25,8 +26,7 @@ object TlsSni {
             if (p + 2 > end) return null
             val extTotal = be16(b, p); p += 2
             val extEnd = minOf(p + extTotal, end)
-            var found: String? = null
-            while (p + 4 <= extEnd && found == null) {
+            while (p + 4 <= extEnd) {
                 val extType = be16(b, p)
                 val extLen = be16(b, p + 2)
                 val extData = p + 4
@@ -37,15 +37,15 @@ object TlsSni {
                         if (q + 3 <= end) {
                             val nameLen = be16(b, q + 1)
                             val nameOff = q + 3
-                            if (nameOff + nameLen <= end) found = ascii(b, nameOff, nameLen)
+                            if (nameOff + nameLen <= end) return ascii(b, nameOff, nameLen)
                         }
                     }
                 }
                 p = extData + extLen
             }
-            found
-        }
-    } catch (e: Exception) { null }
+            return null
+        } catch (e: Exception) { return null }
+    }
 
     private fun be16(b: ByteArray, o: Int) = ((b[o].toInt() and 0xFF) shl 8) or (b[o + 1].toInt() and 0xFF)
     private fun ascii(b: ByteArray, o: Int, n: Int): String {
