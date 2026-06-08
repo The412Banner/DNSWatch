@@ -9,19 +9,28 @@ with on-device evidence instead of guesswork.
 
 ## What it does
 
-- **Pick any installed app(s)** to watch.
-- Mirrors the selected app's outbound traffic to **NFLOG** via an `iptables`
-  owner-match rule (uid-scoped) and runs `tcpdump` on the NFLOG interface.
+- **Pick any installed app(s)** to watch — or flip on **Whole device** to monitor
+  everything at once (NFLOG carries the per-packet uid, so events still attribute
+  to the owning app).
+- Mirrors traffic to **NFLOG** via `iptables` (per-app owner-match, or a global
+  rule for whole-device) and runs `tcpdump` on the NFLOG interface.
 - A pure-Kotlin parser decodes, live:
-  - **DNS** queries/replies (with resolved IPs) — from the system resolver lane,
-  - **TLS SNI** — the hostname inside each HTTPS ClientHello (works even when DNS
-    is encrypted/cached; this is the reliable *per-app* hostname signal),
+  - **DNS** queries/replies (with resolved IPs),
+  - **TLS SNI** — the hostname inside each HTTPS ClientHello,
+  - **QUIC / HTTP-3 SNI** — decrypts the QUIC-v1 Initial packet (HKDF + AES-GCM)
+    to recover the hostname that would otherwise be invisible on UDP/443,
   - **all connection destination IPs**, annotated with their hostname via the
     DNS IP→host map.
-- **Known trackers highlighted** (Google/Firebase/AdMob/analytics/CN-push, etc.).
-- **Per-app domain blocking**: tap a host to DROP it (by resolved IP) for the
-  selected app only — turn the monitor into a per-app firewall.
-- **Export** the capture to a text log.
+- **Hosts tab** — a per-host rollup (host · hit count · classification · proto)
+  with one-tap **"block all trackers."**
+- **Tracker classification** with a switchable catalog: **Built-in** (offline) ·
+  **Exodus Privacy** · **DuckDuckGo Tracker Radar** · **Hosts blocklist**
+  (external lists fetched + cached, fail-safe back to built-in).
+- **Per-app (or whole-device) domain blocking** — tap a host to DROP it; the
+  block-list **persists**, re-applies on start, and follows **rotating IPs** as
+  they resolve. A real per-app firewall.
+- **Session recording** to a full log (beyond the on-screen cap), **Share**
+  (text log or raw **.pcap** for Wireshark), and export to `/sdcard/Download`.
 
 ## Why root + NFLOG (and why SNI matters)
 
