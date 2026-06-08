@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Terminal frame -->
+    <path
+        android:fillColor="#FF6D00"
+        android:pathData="M18,24 Q18,20 22,20 L86,20 Q90,20 90,24 L90,84 Q90,88 86,88 L22,88 Q18,88 18,84 Z" />
+    <!-- Screen area -->
+    <path
+        android:fillColor="#0D0D0D"
+        android:pathData="M22,30 L86,30 L86,84 L22,84 Z" />
+    <!-- Prompt line -->
+    <path
+        android:fillColor="#FF6D00"
+        android:pathData="M26,40 L34,40 L34,44 L26,44 Z" />
+    <!-- Log lines -->
+    <path
+        android:fillColor="#EF5350"
+        android:pathData="M26,50 L82,50 L82,54 L26,54 Z" />
+    <path
+        android:fillColor="#FFB74D"
+        android:pathData="M26,59 L72,59 L72,63 L26,63 Z" />
+    <path
+        android:fillColor="#81C784"
+        android:pathData="M26,68 L62,68 L62,72 L26,72 Z" />
+    <path
+        android:fillColor="#64B5F6"
+        android:pathData="M26,77 L50,77 L50,81 L26,81 Z" />
+    <!-- Title bar text indicator -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M26,23 L42,23 L42,27 L26,27 Z" />
+</vector>
