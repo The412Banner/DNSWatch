@@ -1,6 +1,7 @@
 package com.banner.dnswatch.ui.screen
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,11 +10,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -26,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.banner.dnswatch.data.AppInfo
+import com.banner.dnswatch.data.TrackerDb
 import com.banner.dnswatch.viewmodel.MonitorViewModel
 
 @Composable
@@ -43,13 +48,37 @@ fun AppPickerScreen(vm: MonitorViewModel, onStarted: () -> Unit) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
         )
         Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Switch(checked = vm.fullDevice, onCheckedChange = { vm.fullDevice = it }, enabled = !vm.running)
+            Text("Whole device", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Switch(checked = vm.savePcap, onCheckedChange = { vm.savePcap = it }, enabled = !vm.running)
+            Text(".pcap", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
+            Text("Tracker source — ${vm.trackerStatus}", fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                TrackerDb.Source.entries.forEach { s ->
+                    if (vm.trackerSource == s) Button(onClick = { vm.setTrackerSource(s) }) { Text(s.label) }
+                    else OutlinedButton(onClick = { vm.setTrackerSource(s) }) { Text(s.label) }
+                }
+            }
+        }
+        Row(
             Modifier.fillMaxWidth().padding(12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("${vm.selected.size} selected", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (vm.fullDevice) "whole device" else "${vm.selected.size} selected",
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(
-                enabled = vm.selected.isNotEmpty() && !vm.running,
+                enabled = (vm.fullDevice || vm.selected.isNotEmpty()) && !vm.running,
                 onClick = { vm.start(); if (vm.running) onStarted() },
             ) { Text(if (vm.running) "Monitoring" else "Start monitoring") }
         }

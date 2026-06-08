@@ -1,6 +1,7 @@
 package com.banner.dnswatch.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.os.Handler
 import android.os.Looper
@@ -13,9 +14,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.banner.dnswatch.capture.CaptureEngine
 import com.banner.dnswatch.capture.CaptureService
+import com.banner.dnswatch.capture.TrackerLoader
 import com.banner.dnswatch.data.AppInfo
 import com.banner.dnswatch.data.HostClass
+import com.banner.dnswatch.data.HostStat
 import com.banner.dnswatch.data.NetEvent
+import com.banner.dnswatch.data.TrackerDb
 import com.banner.dnswatch.root.Root
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -33,11 +37,21 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
     val selected = mutableStateMapOf<String, AppInfo>()   // packageName -> AppInfo
     val events = mutableStateListOf<NetEvent>()
     val blocked = mutableStateListOf<String>()
+    val hostStats = mutableStateMapOf<String, HostStat>() // host -> rollup
 
     var rootOk by mutableStateOf<Boolean?>(null); private set
     var running by mutableStateOf(false); private set
     var status by mutableStateOf(""); private set
     var loadingApps by mutableStateOf(false); private set
+
+    // modes / options (set before Start)
+    var fullDevice by mutableStateOf(false)
+    var savePcap by mutableStateOf(false)
+    var pcapPath by mutableStateOf<String?>(null); private set
+
+    // tracker catalog source
+    var trackerSource by mutableStateOf(TrackerDb.Source.BUILT_IN); private set
+    var trackerStatus by mutableStateOf("built-in list"); private set
 
     // recording
     var recording by mutableStateOf(false); private set
@@ -55,8 +69,34 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
     private val incoming = ConcurrentLinkedQueue<NetEvent>()
     private val handler = Handler(Looper.getMainLooper())
     private var engine: CaptureEngine? = null
+    private val prefs = app.getSharedPreferences("dnswatch", Context.MODE_PRIVATE)
 
-    init { checkRoot(); loadApps() }
+    init {
+        checkRoot(); loadApps()
+        blocked.addAll(prefs.getStringSet("blocked", emptySet()) ?: emptySet())
+        val saved = prefs.getString("tracker_source", null)
+        setTrackerSource(TrackerDb.Source.entries.firstOrNull { it.name == saved } ?: TrackerDb.Source.BUILT_IN)
+    }
+
+    fun setTrackerSource(s: TrackerDb.Source) {
+        trackerSource = s
+        TrackerDb.source = s
+        prefs.edit().putString("tracker_source", s.name).apply()
+        if (s == TrackerDb.Source.BUILT_IN) {
+            TrackerDb.external = emptySet(); trackerStatus = "built-in list"; reclassify(); return
+        }
+        trackerStatus = "loading ${s.label}…"
+        viewModelScope.launch {
+            val set = withContext(Dispatchers.IO) { TrackerLoader.load(s, getApplication<Application>().filesDir) }
+            TrackerDb.external = set
+            trackerStatus = if (set.isEmpty()) "${s.label}: load failed — using built-in" else "${s.label}: ${set.size} domains"
+            reclassify()
+        }
+    }
+
+    private fun reclassify() {
+        for ((h, st) in hostStats.toList()) hostStats[h] = st.copy(hostClass = TrackerDb.classify(h))
+    }
 
     private fun checkRoot() = viewModelScope.launch {
         rootOk = withContext(Dispatchers.IO) { Root.isAvailable() }
@@ -67,12 +107,8 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         val pm = getApplication<Application>().packageManager
         val list = withContext(Dispatchers.IO) {
             pm.getInstalledApplications(0).map { ai: ApplicationInfo ->
-                AppInfo(
-                    packageName = ai.packageName,
-                    label = pm.getApplicationLabel(ai).toString(),
-                    uid = ai.uid,
-                    isSystem = (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
-                )
+                AppInfo(ai.packageName, pm.getApplicationLabel(ai).toString(), ai.uid,
+                    (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0)
             }.sortedWith(compareBy({ it.isSystem }, { it.label.lowercase() }))
         }
         apps.clear(); apps.addAll(list); loadingApps = false
@@ -84,14 +120,24 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun start() {
-        if (running || selected.isEmpty()) { status = "select at least one app"; return }
-        val labels = selected.values.associate { it.uid to it.label }
+        if (running) return
+        if (!fullDevice && selected.isEmpty()) { status = "select an app or turn on whole-device"; return }
+        // full-device needs labels for every app; per-app only the selected ones
+        val labels = if (fullDevice) apps.associate { it.uid to it.label }
+                     else selected.values.associate { it.uid to it.label }
+        pcapPath = if (savePcap) File(getApplication<Application>().getExternalFilesDir(null),
+            "dnswatch-${ts()}.pcap").absolutePath else null
         val eng = CaptureEngine(onEvent = { incoming.add(it) }, appLabels = labels)
-        val err = eng.start(selected.values.map { it.uid })
+        val err = eng.start(
+            uids = selected.values.map { it.uid },
+            fullDevice = fullDevice,
+            pcapPath = pcapPath,
+            primeBlocks = blocked.toList(),
+        )
         if (err != null) { status = err; return }
         engine = eng
         running = true
-        status = "monitoring ${selected.size} app(s)"
+        status = if (fullDevice) "monitoring whole device" else "monitoring ${selected.size} app(s)"
         CaptureService.start(getApplication())
         scheduleDrain()
     }
@@ -101,28 +147,23 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         running = false
         status = "stopped"
         CaptureService.stop(getApplication())
-        // flush a final drain, then stop recording so nothing is lost
         drainOnce(Int.MAX_VALUE)
         if (recording) stopRecording()
         handler.removeCallbacksAndMessages(null)
     }
 
-    // ---- session recording (full log to file, beyond the in-memory cap) ----
+    // ---- session recording ----
     fun toggleRecord() { if (recording) stopRecording() else startRecording() }
 
     private fun startRecording() {
-        val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(System.currentTimeMillis())
-        val dir = getApplication<Application>().getExternalFilesDir(null)
-        val f = File(dir, "dnswatch-session-$ts.log")
+        val f = File(getApplication<Application>().getExternalFilesDir(null), "dnswatch-session-${ts()}.log")
         val w = BufferedWriter(FileWriter(f))
-        w.write("# DNSWatch session $ts\n")
-        w.write("# apps: ${selected.values.joinToString { "${it.label}(uid ${it.uid})" }}\n")
+        w.write("# DNSWatch session ${ts()}\n")
+        w.write("# scope: ${if (fullDevice) "whole device" else selected.values.joinToString { "${it.label}(uid ${it.uid})" }}\n")
         w.write("# columns: epochMs\tapp\tkind\tdir\tproto\thost\tip:port\tanswers\n")
-        // seed with whatever is already on screen (oldest first)
         events.asReversed().forEach { w.write(line(it)) }
         recordFile = f; logWriter = w; recordCount = events.size
-        recording = true
-        recordPath = f.absolutePath
+        recording = true; recordPath = f.absolutePath
         status = "recording → ${f.name}"
     }
 
@@ -131,10 +172,7 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { logWriter?.flush(); logWriter?.close() }
         logWriter = null
         val f = recordFile ?: return
-        // copy to /sdcard/Download for easy access (root; falls back to app dir)
-        val dest = "/sdcard/Download/${f.name}"
-        val (code, _) = Root.exec("cp '${f.absolutePath}' '$dest' && chmod 644 '$dest'")
-        recordPath = if (code == 0) dest else f.absolutePath
+        recordPath = copyToDownloads(f)
         status = "saved $recordCount events → $recordPath"
     }
 
@@ -142,13 +180,27 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         "${e.timeMs}\t${e.appLabel}\t${e.kind}\t${e.direction}\t${e.proto}\t" +
             "${e.host ?: "-"}\t${e.remoteIp ?: "-"}:${e.port}\t${e.answers.joinToString(",")}\n"
 
-    fun clear() { events.clear(); incoming.clear() }
+    fun clear() { events.clear(); incoming.clear(); hostStats.clear() }
 
+    // ---- blocking ----
     fun toggleBlock(host: String) {
         val eng = engine
-        if (eng == null) { status = "start monitoring first to block"; return }
-        if (blocked.contains(host)) { eng.unblock(host); blocked.remove(host) }
-        else { eng.block(host); blocked.add(host) }
+        if (blocked.contains(host)) { eng?.unblock(host); blocked.remove(host) }
+        else { eng?.block(host); blocked.add(host) }
+        persistBlocked()
+        if (eng == null) status = "saved to block-list — applies on next Start"
+    }
+
+    fun blockAllTrackers() {
+        val eng = engine
+        val targets = hostStats.values.filter { it.hostClass == HostClass.TRACKER && it.host !in blocked }
+        targets.forEach { eng?.block(it.host); blocked.add(it.host) }
+        persistBlocked()
+        status = "blocked ${targets.size} tracker host(s)"
+    }
+
+    private fun persistBlocked() {
+        prefs.edit().putStringSet("blocked", blocked.toSet()).apply()
     }
 
     private fun scheduleDrain() {
@@ -160,13 +212,17 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         }, 150)
     }
 
-    /** Moves up to [limit] queued events into the UI list; records each first so
-     *  the on-disk log keeps everything even past the in-memory cap. */
     private fun drainOnce(limit: Int) {
         var n = 0
         while (n < limit) {
             val e = incoming.poll() ?: break
             if (recording) runCatching { logWriter?.write(line(e)); recordCount++ }
+            e.host?.let { h ->
+                val cur = hostStats[h]
+                hostStats[h] = HostStat(h, (cur?.count ?: 0) + 1,
+                    if (cur?.hostClass == HostClass.TRACKER) HostClass.TRACKER else e.hostClass,
+                    e.timeMs, e.proto)
+            }
             events.add(0, e)
             n++
         }
@@ -183,19 +239,35 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun export(): String {
-        val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(System.currentTimeMillis())
-        val dir = getApplication<Application>().getExternalFilesDir(null)
-        val f = File(dir, "dnswatch-$ts.txt")
+    /** host rollup, trackers first then by hit count. */
+    fun hostSummary(): List<HostStat> =
+        hostStats.values.sortedWith(compareByDescending<HostStat> { it.hostClass == HostClass.TRACKER }
+            .thenByDescending { it.count })
+
+    /** Writes the current capture to a text file and returns it (for Share). */
+    fun export(): File {
+        val f = File(getApplication<Application>().getExternalFilesDir(null), "dnswatch-${ts()}.txt")
         f.writeText(buildString {
-            appendLine("# DNSWatch capture $ts")
-            appendLine("# apps: ${selected.values.joinToString { it.label }}")
+            appendLine("# DNSWatch capture ${ts()}")
+            appendLine("# scope: ${if (fullDevice) "whole device" else selected.values.joinToString { it.label }}")
             appendLine("# blocked: ${blocked.joinToString()}")
             appendLine()
             events.asReversed().forEach { e ->
                 appendLine("${e.timeMs}\t${e.appLabel}\t${e.kind}\t${e.direction}\t${e.proto}\t${e.host ?: "-"}\t${e.remoteIp ?: "-"}:${e.port}\t${e.answers.joinToString(",")}")
             }
         })
-        return f.absolutePath
+        copyToDownloads(f)
+        return f
     }
+
+    /** Best-effort root copy into /sdcard/Download; returns the visible path. */
+    private fun copyToDownloads(f: File): String {
+        val dest = "/sdcard/Download/${f.name}"
+        val (code, _) = Root.exec("mkdir -p /sdcard/Download && cp '${f.absolutePath}' '$dest' && chmod 644 '$dest'")
+        return if (code == 0) dest else f.absolutePath
+    }
+
+    fun pcapFile(): File? = pcapPath?.let { File(it) }?.takeIf { it.exists() }
+
+    private fun ts() = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(System.currentTimeMillis())
 }

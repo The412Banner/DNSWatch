@@ -59,8 +59,14 @@ object PacketParser {
                 if (l4 + 8 > end) return null
                 val sp = be16(b, l4); val dp = be16(b, l4 + 2)
                 val pay = l4 + 8
-                val dns = if (sp == 53 || dp == 53) parseDns(b, pay, end) else null
-                return L4Info(ipVer, "UDP", src, dst, sp, dp, false, false, dns, null)
+                if (sp == 53 || dp == 53) {
+                    return L4Info(ipVer, "UDP", src, dst, sp, dp, false, false, parseDns(b, pay, end), null)
+                }
+                if (dp == 443 || sp == 443) { // QUIC / HTTP-3
+                    val sni = if (dp == 443 && pay < end) QuicParser.extractSni(b, pay, end - pay) else null
+                    return L4Info(ipVer, "QUIC", src, dst, sp, dp, false, false, null, sni)
+                }
+                return L4Info(ipVer, "UDP", src, dst, sp, dp, false, false, null, null)
             }
             6 -> { // TCP
                 if (l4 + 20 > end) return null
@@ -70,7 +76,7 @@ object PacketParser {
                 val syn = flags and 0x02 != 0
                 val ack = flags and 0x10 != 0
                 val pay = l4 + dataOff
-                val sni = if (dp == 443 && pay < end) parseSni(b, pay, end) else null
+                val sni = if (dp == 443 && pay < end) TlsSni.fromRecord(b, pay, end) else null
                 val dns = if (sp == 53 || dp == 53) parseDns(b, pay + 2, end) else null // TCP DNS len-prefixed
                 return L4Info(ipVer, "TCP", src, dst, sp, dp, syn, ack, dns, sni)
             }
@@ -144,43 +150,6 @@ object PacketParser {
 
     private fun qtypeStr(t: Int) = when (t) { 1 -> "A"; 28 -> "AAAA"; 5 -> "CNAME"; 65 -> "HTTPS"; else -> "T$t" }
 
-    // ---- TLS SNI (ClientHello) ----
-    private fun parseSni(b: ByteArray, payOff: Int, end: Int): String? {
-        var p = payOff
-        if (p + 5 > end) return null
-        if (b[p].toInt() and 0xFF != 0x16) return null      // handshake
-        val hs = p + 5
-        if (hs + 4 > end) return null
-        if (b[hs].toInt() and 0xFF != 0x01) return null      // client_hello
-        p = hs + 4
-        p += 2 + 32                                          // client_version + random
-        if (p >= end) return null
-        val sidLen = b[p].toInt() and 0xFF; p += 1 + sidLen
-        if (p + 2 > end) return null
-        val cipherLen = be16(b, p); p += 2 + cipherLen
-        if (p + 1 > end) return null
-        val compLen = b[p].toInt() and 0xFF; p += 1 + compLen
-        if (p + 2 > end) return null
-        val extTotal = be16(b, p); p += 2
-        val extEnd = minOf(p + extTotal, end)
-        while (p + 4 <= extEnd) {
-            val extType = be16(b, p)
-            val extLen = be16(b, p + 2)
-            val extData = p + 4
-            if (extType == 0) {
-                var q = extData
-                if (q + 2 > end) return null
-                q += 2 // server_name_list length
-                if (q + 3 > end) return null
-                val nameLen = be16(b, q + 1)
-                val nameOff = q + 3
-                if (nameOff + nameLen <= end) return ascii(b, nameOff, nameLen)
-            }
-            p = extData + extLen
-        }
-        return null
-    }
-
     // ---- helpers ----
     private fun be16(b: ByteArray, o: Int) = ((b[o].toInt() and 0xFF) shl 8) or (b[o + 1].toInt() and 0xFF)
     private fun ipv4(b: ByteArray, o: Int) =
@@ -191,11 +160,6 @@ object PacketParser {
             if (i > 0) sb.append(':')
             sb.append(Integer.toHexString(((b[o + i * 2].toInt() and 0xFF) shl 8) or (b[o + i * 2 + 1].toInt() and 0xFF)))
         }
-        return sb.toString()
-    }
-    private fun ascii(b: ByteArray, o: Int, n: Int): String {
-        val sb = StringBuilder()
-        for (i in 0 until n) sb.append((b[o + i].toInt() and 0xFF).toChar())
         return sb.toString()
     }
 }

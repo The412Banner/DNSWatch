@@ -1,6 +1,10 @@
 package com.banner.dnswatch.ui.screen
 
+import android.content.Context
+import android.content.Intent
 import android.widget.Toast
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -58,7 +62,7 @@ fun MonitorScreen(vm: MonitorViewModel) {
                 Button(onClick = { vm.stop() },
                     colors = ButtonDefaults.buttonColors(containerColor = TrackerRed)) { Text("Stop") }
             } else {
-                Button(onClick = { vm.start() }, enabled = vm.selected.isNotEmpty()) { Text("Start") }
+                Button(onClick = { vm.start() }, enabled = vm.fullDevice || vm.selected.isNotEmpty()) { Text("Start") }
             }
             if (vm.recording) {
                 Button(onClick = { vm.toggleRecord() },
@@ -67,9 +71,10 @@ fun MonitorScreen(vm: MonitorViewModel) {
                 OutlinedButton(onClick = { vm.toggleRecord() }) { Text("Record") }
             }
             OutlinedButton(onClick = { vm.clear() }) { Text("Clear") }
-            OutlinedButton(onClick = {
-                val p = vm.export(); Toast.makeText(ctx, "Saved $p", Toast.LENGTH_LONG).show()
-            }) { Text("Export") }
+            OutlinedButton(onClick = { shareFile(ctx, vm.export()) }) { Text("Export / Share") }
+            vm.pcapFile()?.let { pf ->
+                OutlinedButton(onClick = { shareFile(ctx, pf) }) { Text("Share .pcap") }
+            }
         }
         if (vm.recording) {
             Text("● recording ${vm.recordCount} events → ${vm.recordPath ?: ""}",
@@ -142,6 +147,18 @@ private fun EventRow(e: NetEvent, vm: MonitorViewModel) {
         }
     }
     HorizontalDivider(color = Color(0x14FFFFFF))
+}
+
+private fun shareFile(ctx: Context, f: File) {
+    runCatching {
+        val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", f)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = if (f.name.endsWith(".pcap")) "application/octet-stream" else "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        ctx.startActivity(Intent.createChooser(send, "Share ${f.name}").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.onFailure { Toast.makeText(ctx, "Saved ${f.absolutePath}", Toast.LENGTH_LONG).show() }
 }
 
 private fun arrow(d: Direction) = if (d == Direction.OUT) "↑" else "↓"

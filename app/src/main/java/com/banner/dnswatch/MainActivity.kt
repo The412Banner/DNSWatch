@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.banner.dnswatch.ui.screen.AppPickerScreen
+import com.banner.dnswatch.ui.screen.HostsScreen
 import com.banner.dnswatch.ui.screen.MonitorScreen
 import com.banner.dnswatch.ui.theme.DNSWatchTheme
 import com.banner.dnswatch.viewmodel.MonitorViewModel
@@ -69,6 +71,11 @@ private fun AppRoot(vm: MonitorViewModel) {
                     icon = { Icon(Icons.Filled.Timeline, null) },
                     label = { Text("Live${if (vm.running) " ●" else ""}") },
                 )
+                NavigationBarItem(
+                    selected = tab == 2, onClick = { tab = 2 },
+                    icon = { Icon(Icons.Filled.Dns, null) },
+                    label = { Text("Hosts") },
+                )
             }
         }
     ) { pad ->
@@ -77,7 +84,8 @@ private fun AppRoot(vm: MonitorViewModel) {
             Box(Modifier.fillMaxSize()) {
                 when (tab) {
                     0 -> AppPickerScreen(vm) { tab = 1 }
-                    else -> MonitorScreen(vm)
+                    1 -> MonitorScreen(vm)
+                    else -> HostsScreen(vm)
                 }
             }
         }

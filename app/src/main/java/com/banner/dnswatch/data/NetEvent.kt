@@ -39,11 +39,35 @@ object TrackerDb {
         "vgabc.com", "xiaoji", "gamehub", "banner.hub",
     )
 
+    /** Where the tracker catalog comes from. BUILT_IN is the offline default. */
+    enum class Source(val label: String) {
+        BUILT_IN("Built-in"), EXODUS("Exodus"), DDG("DDG Radar"), HOSTS("Hosts list")
+    }
+
+    @Volatile var source: Source = Source.BUILT_IN
+    /** Domain set for the active external catalog (suffix-matched). Empty until loaded. */
+    @Volatile var external: Set<String> = emptySet()
+
     fun classify(host: String?): HostClass {
         if (host == null) return HostClass.NEUTRAL
         val h = host.lowercase()
-        if (tracker.any { h.contains(it.replace(".*", "")) }) return HostClass.TRACKER
         if (firstParty.any { h.contains(it) }) return HostClass.FIRSTPARTY
-        return HostClass.NEUTRAL
+        val isTracker = if (source == Source.BUILT_IN || external.isEmpty()) {
+            tracker.any { h.contains(it.replace(".*", "")) }
+        } else {
+            domainMatches(h, external)
+        }
+        return if (isTracker) HostClass.TRACKER else HostClass.NEUTRAL
+    }
+
+    /** True if [host] or any parent domain is in [set] (e.g. a.b.doubleclick.net ∈ {doubleclick.net}). */
+    private fun domainMatches(host: String, set: Set<String>): Boolean {
+        var h = host
+        while (true) {
+            if (set.contains(h)) return true
+            val dot = h.indexOf('.')
+            if (dot < 0) return false
+            h = h.substring(dot + 1)
+        }
     }
 }
