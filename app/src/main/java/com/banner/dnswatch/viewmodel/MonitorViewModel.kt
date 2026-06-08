@@ -49,9 +49,9 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
     var savePcap by mutableStateOf(false)
     var pcapPath by mutableStateOf<String?>(null); private set
 
-    // tracker catalog source
-    var trackerSource by mutableStateOf(TrackerDb.Source.BUILT_IN); private set
-    var trackerStatus by mutableStateOf("built-in list"); private set
+    // combined tracker catalog (built-in + merged external lists)
+    var catalogStatus by mutableStateOf("built-in list"); private set
+    var catalogUpdating by mutableStateOf(false); private set
 
     // recording
     var recording by mutableStateOf(false); private set
@@ -74,24 +74,31 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
     init {
         checkRoot(); loadApps()
         blocked.addAll(prefs.getStringSet("blocked", emptySet()) ?: emptySet())
-        val saved = prefs.getString("tracker_source", null)
-        selectTrackerSource(TrackerDb.Source.entries.firstOrNull { it.name == saved } ?: TrackerDb.Source.BUILT_IN)
+        loadCatalog(force = false)   // build the combined list from cache (offline-safe)
     }
 
-    fun selectTrackerSource(s: TrackerDb.Source) {
-        trackerSource = s
-        TrackerDb.source = s
-        prefs.edit().putString("tracker_source", s.name).apply()
-        if (s == TrackerDb.Source.BUILT_IN) {
-            TrackerDb.external = emptySet(); trackerStatus = "built-in list"; reclassify(); return
-        }
-        trackerStatus = "loading ${s.label}…"
+    /** Re-fetch every external catalog and rebuild the merged list. */
+    fun updateCatalog() = loadCatalog(force = true)
+
+    private fun loadCatalog(force: Boolean) {
+        if (catalogUpdating) return
+        catalogUpdating = true
+        catalogStatus = if (force) "updating…" else "loading…"
         viewModelScope.launch {
-            val set = withContext(Dispatchers.IO) { TrackerLoader.load(s, getApplication<Application>().filesDir) }
+            val set = withContext(Dispatchers.IO) {
+                runCatching { TrackerLoader.loadMerged(getApplication<Application>().filesDir, force) }.getOrDefault(emptySet())
+            }
             TrackerDb.external = set
-            trackerStatus = if (set.isEmpty()) "${s.label}: load failed — using built-in" else "${s.label}: ${set.size} domains"
+            if (set.isNotEmpty()) prefs.edit().putLong("catalog_updated", System.currentTimeMillis()).apply()
+            catalogStatus = "built-in + ${set.size} domains" + lastUpdatedSuffix()
+            catalogUpdating = false
             reclassify()
         }
+    }
+
+    private fun lastUpdatedSuffix(): String {
+        val t = prefs.getLong("catalog_updated", 0L)
+        return if (t == 0L) "" else " · updated ${SimpleDateFormat("MMM d HH:mm", Locale.US).format(t)}"
     }
 
     private fun reclassify() {

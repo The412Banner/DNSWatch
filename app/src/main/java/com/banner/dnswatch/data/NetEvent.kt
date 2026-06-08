@@ -39,24 +39,18 @@ object TrackerDb {
         "vgabc.com", "xiaoji", "gamehub", "banner.hub",
     )
 
-    /** Where the tracker catalog comes from. BUILT_IN is the offline default. */
-    enum class Source(val label: String) {
-        BUILT_IN("Built-in"), EXODUS("Exodus"), DDG("DDG Radar"), HOSTS("Hosts list")
-    }
+    /** External catalogs merged into the combined list (built-in is always on top). */
+    enum class Source(val label: String) { EXODUS("Exodus"), DDG("DDG Radar"), HOSTS("Hosts list") }
 
-    @Volatile var source: Source = Source.BUILT_IN
-    /** Domain set for the active external catalog (suffix-matched). Empty until loaded. */
+    /** Merged domain set (union of all fetched external catalogs). Suffix-matched.
+     *  The built-in substring list is always applied on top of this. */
     @Volatile var external: Set<String> = emptySet()
 
     fun classify(host: String?): HostClass {
         if (host == null) return HostClass.NEUTRAL
         val h = host.lowercase()
         if (firstParty.any { h.contains(it) }) return HostClass.FIRSTPARTY
-        val isTracker = if (source == Source.BUILT_IN || external.isEmpty()) {
-            tracker.any { h.contains(it.replace(".*", "")) }
-        } else {
-            domainMatches(h, external)
-        }
+        val isTracker = tracker.any { h.contains(it.replace(".*", "")) } || domainMatches(h, external)
         return if (isTracker) HostClass.TRACKER else HostClass.NEUTRAL
     }
 

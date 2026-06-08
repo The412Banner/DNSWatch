@@ -7,22 +7,32 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Fetches/parses/caches an external tracker catalog into a domain set.
- * Always fail-safe: returns an empty set on any error (caller falls back to the
- * built-in list). Cached to [cacheDir]/tracker_<source>.txt so it loads offline.
+ * Fetches/parses/caches the external tracker catalogs and merges them into one
+ * domain set (Exodus ∪ DDG Tracker Radar ∪ Hosts blocklist). The built-in list is
+ * always applied on top of this in [TrackerDb.classify].
+ *
+ * Always fail-safe: a source that errors contributes nothing (caller still has the
+ * built-in list + whatever else loaded). Each source caches to
+ * [cacheDir]/tracker_<source>.txt so it loads offline; "Update" force-refreshes all.
  */
 object TrackerLoader {
+
+    private val EXTERNAL = listOf(TrackerDb.Source.EXODUS, TrackerDb.Source.DDG, TrackerDb.Source.HOSTS)
 
     private fun urlFor(s: TrackerDb.Source) = when (s) {
         TrackerDb.Source.DDG -> "https://staticcdn.duckduckgo.com/trackerblocking/v5/current/extension-tds.json"
         TrackerDb.Source.EXODUS -> "https://reports.exodus-privacy.eu.org/api/trackers"
         TrackerDb.Source.HOSTS -> "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
-        TrackerDb.Source.BUILT_IN -> ""
     }
 
-    /** Returns (domains, fromCache?). Loads cache first, else downloads + caches. */
-    fun load(source: TrackerDb.Source, cacheDir: File): Set<String> {
-        if (source == TrackerDb.Source.BUILT_IN) return emptySet()
+    /** Merged set of all external catalogs. [force] re-downloads (else uses cache). */
+    fun loadMerged(cacheDir: File, force: Boolean): Set<String> {
+        val out = HashSet<String>()
+        for (s in EXTERNAL) out += if (force) refresh(s, cacheDir) else load(s, cacheDir)
+        return out
+    }
+
+    private fun load(source: TrackerDb.Source, cacheDir: File): Set<String> {
         val cache = File(cacheDir, "tracker_${source.name.lowercase()}.txt")
         if (cache.exists() && cache.length() > 0) {
             return runCatching { cache.readLines().filter { it.isNotBlank() }.toHashSet() }.getOrDefault(emptySet())
@@ -32,8 +42,7 @@ object TrackerLoader {
         return domains
     }
 
-    /** Force a fresh download (ignores cache). */
-    fun refresh(source: TrackerDb.Source, cacheDir: File): Set<String> {
+    private fun refresh(source: TrackerDb.Source, cacheDir: File): Set<String> {
         File(cacheDir, "tracker_${source.name.lowercase()}.txt").delete()
         return load(source, cacheDir)
     }
@@ -44,7 +53,6 @@ object TrackerLoader {
             TrackerDb.Source.DDG -> parseDdg(text)
             TrackerDb.Source.EXODUS -> parseExodus(text)
             TrackerDb.Source.HOSTS -> parseHosts(text)
-            TrackerDb.Source.BUILT_IN -> emptySet()
         }
     }
 

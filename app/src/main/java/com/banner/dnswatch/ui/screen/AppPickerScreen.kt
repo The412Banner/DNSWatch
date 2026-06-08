@@ -57,17 +57,14 @@ fun AppPickerScreen(vm: MonitorViewModel, onStarted: () -> Unit) {
             Switch(checked = vm.savePcap, onCheckedChange = { vm.savePcap = it }, enabled = !vm.running)
             Text(".pcap", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
-            Text("Tracker source — ${vm.trackerStatus}", fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                TrackerDb.Source.entries.forEach { s ->
-                    if (vm.trackerSource == s) Button(onClick = { vm.selectTrackerSource(s) }) { Text(s.label) }
-                    else OutlinedButton(onClick = { vm.selectTrackerSource(s) }) { Text(s.label) }
-                }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Tracker catalog — ${vm.catalogStatus}", fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = { vm.updateCatalog() }, enabled = !vm.catalogUpdating) {
+                Text(if (vm.catalogUpdating) "…" else "Update")
             }
         }
         Row(
